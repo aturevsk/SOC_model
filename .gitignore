@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Build artifacts
+*.o
+*.elf
+option1_c/soc_test
+option1_c/test_equiv
+benchmarks/bench_opt*
+benchmarks/omp_stub.h
+
+# MATLAB generated (keep codegen output, skip temp)
+*.asv
+*.slxc
+slprj/
+codegen/
+*.mex*
+
+# Large binary files (keep model files)
+*.npz
+
+# MATLAB codegen build artifacts
+**/buildInfo.mat
+**/compileInfo.mat
+**/codeInfo.mat
+**/codedescriptor.dmr
+**/_clang-format
+**/report.mldatx
+**/interface/
+**/examples/
+**/html/
+
+# Weights JSON (large, derivable from .pt2)
+model_weights.json
+
+# Compiled libraries
+*.a
+*.lib
+*.dmr
+_clang-format
+*.mldatx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
