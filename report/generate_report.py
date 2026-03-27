@@ -552,7 +552,7 @@ def build_report():
         ['Import', 'SUCCESSFUL — 9-layer dlnetwork with native LSTMLayer(x2) + custom helpers'],
         ['Custom Layer Codegen', 'Supported — matlabCodegenRedirect to +coder versions with %#codegen'],
         ['Code Generation (lib)', 'SUCCESSFUL with coder.config(\'lib\')'],
-        ['Code Generation (ecoder)', 'FAILED — Embedded Coder config does not work'],
+        ['Code Generation (ecoder)', 'SUCCESSFUL with DeepLearningConfig(\'none\') — see Key Insight below'],
         ['Generated C (main)', 'callPredict.c — 11,708 lines'],
         ['Total Generated C', '~12,297 lines (main + 8 support files)'],
         ['MATLAB Inference', '5.275 ms/inference (slower due to ONNX layer overhead)'],
@@ -572,10 +572,14 @@ def build_report():
     story.append(t_opt4)
     story.append(Spacer(1, 0.1*inch))
     story.append(Paragraph(
-        "<b>Note:</b> The Embedded Coder ('ecoder') configuration fails for this model. "
-        "Only the basic 'lib' configuration works. This means the generated code may not "
-        "include all embedded-specific optimizations but is still deployable with manual "
-        "build system integration.", styles['Body']))
+        "<b>Key Insight (from prior project):</b> Embedded Coder with deep learning models "
+        "requires <font face='Courier'>coder.DeepLearningConfig('none')</font> to be set "
+        "explicitly. Without it, Embedded Coder silently fails or produces incorrect output. "
+        "This fix was identified from a prior LSTM code generation project "
+        "(LSTMforecaster). After applying it, Option 4 codegen with Embedded Coder "
+        "<b>succeeded</b>. The generated C library (<font face='Courier'>predict_soc_onnx.a</font>) "
+        "includes RTW make files and <font face='Courier'>rtwtypes.h</font> — confirming "
+        "full Embedded Coder output.", styles['Body']))
 
     story.append(Paragraph("<b>Steps Taken:</b>", styles['SubHead']))
     steps_opt4 = ListFlowable([
@@ -695,11 +699,56 @@ def build_report():
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     story.append(t7)
+    story.append(Spacer(1, 0.1*inch))
+    story.append(Paragraph(
+        "* Option 4 Embedded Coder requires <font face='Courier'>coder.DeepLearningConfig('none')</font> — see critical insight below.",
+        styles['SmallNote']))
+
+    story.append(Spacer(1, 0.15*inch))
+
+    # Critical insight callout
+    insight_data = [[
+        Paragraph(
+            "<b>Critical Insight: coder.DeepLearningConfig('none') Required for Embedded Coder</b><br/><br/>"
+            "When using Embedded Coder (<font face='Courier'>coder.config('lib', 'ecoder', true)</font>) "
+            "with any deep learning model (dlnetwork, ExportedProgram, ONNX import), you <b>must</b> "
+            "explicitly set:<br/><br/>"
+            "<font face='Courier'>dlcfg = coder.DeepLearningConfig('none');<br/>"
+            "cfg.DeepLearningConfig = dlcfg;</font><br/><br/>"
+            "Without this, Embedded Coder does not know how to handle the deep learning layer "
+            "inference and will fail or produce incorrect output. This setting forces pure C "
+            "output with no external library dependency (no CUDA, no MKL-DNN, no ARM Compute Library). "
+            "It is critical for bare-metal MCU targets like the STM32F746G.<br/><br/>"
+            "This insight was identified from a prior project (LSTMforecaster at "
+            "<font face='Courier'>PyTorch_Import_2/LSTMforecaster</font>) and applied to "
+            "Options 2, 4, and 5 in this project. Options 4 and 5 initially failed with Embedded "
+            "Coder until <font face='Courier'>DeepLearningConfig('none')</font> was added.",
+            styles['Body'])
+    ]]
+    t_insight = Table(insight_data, colWidths=[6.5*inch])
+    t_insight.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fef9e7')),
+        ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#f39c12')),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('LEFTPADDING', (0, 0), (-1, -1), 12),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+    ]))
+    story.append(t_insight)
 
     # ======================== 9. BENCHMARKING ========================
     story.append(Spacer(1, 0.2*inch))
     story.append(Paragraph("10. Benchmarking Results", styles['SectionHead']))
 
+    story.append(Paragraph(
+        "<b>Important:</b> All benchmarks for Options 2, 4, and 5 use the <b>Embedded Coder generated C</b> "
+        "compiled with gcc -O2 on the host. The Embedded Coder output includes "
+        "<font face='Courier'>rtwtypes.h</font>, RTW makefiles, and initialize/terminate "
+        "lifecycle functions — confirming these are not basic lib outputs. "
+        "An OpenMP stub (<font face='Courier'>omp.h</font>) is provided for host compilation "
+        "since the generated code includes OpenMP headers.",
+        styles['Body']))
+    story.append(Spacer(1, 0.05*inch))
     story.append(Paragraph("10.1 Host C Benchmark (100K iterations, gcc -O2, Apple Silicon):", styles['SubHead']))
     host_bench = [
         ['Option', 'Mean (us)', 'Median', 'Min', 'P95', 'Throughput'],
