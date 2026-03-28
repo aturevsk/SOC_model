@@ -484,6 +484,15 @@ code {{ font-size: 0.82rem; }}
 <tr style="background:rgba(34,197,94,0.08)"><td><b>Code size reduction</b></td><td colspan="2"><b>69% smaller &mdash; 0.31&times; vs direct codegen</b></td></tr>
 </table>
 <p style="margin-top:10px">The Simulink-generated C files (<code>soc_opt5_network.c</code>, <code>soc_opt5_network_data.c</code>, <code>ert_main.c</code>) are viewable in the <b>Code Explorer</b> under <i>Opt 5: Simulink Codegen</i>. The weight data file (<code>soc_opt5_network_data.c</code>) contains the int8 fixed-point coefficients — compare it to Option 2&apos;s float32 <code>predict_soc.c</code> to see the quantization difference directly.</p>
+<p style="margin-top:8px">
+  <b>Download Simulink model (proj10_quant, fixed-point):</b>
+  <a href="https://github.com/aturevsk/SOC_model/raw/main/option5_compressed/soc_opt5_network.slx"
+     style="color:var(--accent);font-weight:600;text-decoration:none;"
+     download="soc_opt5_network.slx">
+    &#x2193; soc_opt5_network.slx
+  </a>
+  <span style="color:var(--muted);font-size:0.8rem;margin-left:8px">(MATLAB R2026a · quantizedDlnetwork exported via exportNetworkToSimulink)</span>
+</p>
 </div>
 
 <h3>Key Technical Issues &amp; Fixes</h3>
