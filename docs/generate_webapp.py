@@ -45,6 +45,7 @@ CODE_FILES = [
     ("Opt 5: Compression", "option5_compressed/step1_compress.m", "matlab"),
     ("Opt 5: Compression", "option5_compressed/step2_simulink_sim.m", "matlab"),
     ("Opt 5: Compression", "option5_compressed/step3_codegen_compare.m", "matlab"),
+    ("Opt 5: Compression", "option5_compressed/build_simulink_model.m", "matlab"),
     ("Opt 5: Compression", "option5_compressed/TestPipeline_opt5.m", "matlab"),
     # Simulink generated C (proj10_quant fixed-point — from Step 2 .slx export)
     ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/soc_opt5_network.h", "c"),
@@ -485,13 +486,12 @@ code {{ font-size: 0.82rem; }}
 </table>
 <p style="margin-top:10px">The Simulink-generated C files (<code>soc_opt5_network.c</code>, <code>soc_opt5_network_data.c</code>, <code>ert_main.c</code>) are viewable in the <b>Code Explorer</b> under <i>Opt 5: Simulink Codegen</i>. The weight data file (<code>soc_opt5_network_data.c</code>) contains the int8 fixed-point coefficients — compare it to Option 2&apos;s float32 <code>predict_soc.c</code> to see the quantization difference directly.</p>
 <p style="margin-top:8px">
-  <b>Download Simulink model (proj10_quant, fixed-point):</b>
-  <a href="https://github.com/aturevsk/SOC_model/raw/main/option5_compressed/soc_opt5_network.slx"
-     style="color:var(--accent);font-weight:600;text-decoration:none;"
-     download="soc_opt5_network.slx">
-    &#x2193; soc_opt5_network.slx
-  </a>
-  <span style="color:var(--muted);font-size:0.8rem;margin-left:8px">(MATLAB R2026a · quantizedDlnetwork exported via exportNetworkToSimulink)</span>
+  <b>Recreate the Simulink model:</b> Run
+  <code>build_simulink_model.m</code> (viewable in Code Explorer under <i>Opt 5: Compression</i>).
+  The script programmatically builds <code>soc_opt5_model.slx</code> from the saved compressed network
+  using <code>new_system</code> / <code>add_block</code> / <code>exportNetworkToSimulink</code> —
+  no binary committed to source control.
+  <span style="color:var(--muted);font-size:0.8rem;margin-left:4px">(MATLAB R2026a · requires soc_compressed_opt5.mat)</span>
 </p>
 </div>
 

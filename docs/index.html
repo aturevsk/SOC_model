@@ -362,13 +362,12 @@ code { font-size: 0.82rem; }
 </table>
 <p style="margin-top:10px">The Simulink-generated C files (<code>soc_opt5_network.c</code>, <code>soc_opt5_network_data.c</code>, <code>ert_main.c</code>) are viewable in the <b>Code Explorer</b> under <i>Opt 5: Simulink Codegen</i>. The weight data file (<code>soc_opt5_network_data.c</code>) contains the int8 fixed-point coefficients — compare it to Option 2&apos;s float32 <code>predict_soc.c</code> to see the quantization difference directly.</p>
 <p style="margin-top:8px">
-  <b>Download Simulink model (proj10_quant, fixed-point):</b>
-  <a href="https://github.com/aturevsk/SOC_model/raw/main/option5_compressed/soc_opt5_network.slx"
-     style="color:var(--accent);font-weight:600;text-decoration:none;"
-     download="soc_opt5_network.slx">
-    &#x2193; soc_opt5_network.slx
-  </a>
-  <span style="color:var(--muted);font-size:0.8rem;margin-left:8px">(MATLAB R2026a · quantizedDlnetwork exported via exportNetworkToSimulink)</span>
+  <b>Recreate the Simulink model:</b> Run
+  <code>build_simulink_model.m</code> (viewable in Code Explorer under <i>Opt 5: Compression</i>).
+  The script programmatically builds <code>soc_opt5_model.slx</code> from the saved compressed network
+  using <code>new_system</code> / <code>add_block</code> / <code>exportNetworkToSimulink</code> —
+  no binary committed to source control.
+  <span style="color:var(--muted);font-size:0.8rem;margin-left:4px">(MATLAB R2026a · requires soc_compressed_opt5.mat)</span>
 </p>
 </div>
 
@@ -423,14 +422,15 @@ code { font-size: 0.82rem; }
 <div class="tree-file" onclick="showFile(22)" id="tf-22">step1_compress.m</div>
 <div class="tree-file" onclick="showFile(23)" id="tf-23">step2_simulink_sim.m</div>
 <div class="tree-file" onclick="showFile(24)" id="tf-24">step3_codegen_compare.m</div>
-<div class="tree-file" onclick="showFile(25)" id="tf-25">TestPipeline_opt5.m</div>
+<div class="tree-file" onclick="showFile(25)" id="tf-25">build_simulink_model.m</div>
+<div class="tree-file" onclick="showFile(26)" id="tf-26">TestPipeline_opt5.m</div>
 <div class="tree-group">Opt 5: Simulink Codegen</div>
-<div class="tree-file" onclick="showFile(26)" id="tf-26">soc_opt5_network.h</div>
-<div class="tree-file" onclick="showFile(27)" id="tf-27">soc_opt5_network.c <span class="line-badge">794 lines</span></div>
-<div class="tree-file" onclick="showFile(28)" id="tf-28">soc_opt5_network_types.h</div>
-<div class="tree-file" onclick="showFile(29)" id="tf-29">soc_opt5_network_data.c <span class="line-badge">2,636 lines</span></div>
-<div class="tree-file" onclick="showFile(30)" id="tf-30">ert_main.c</div>
-<div class="tree-file" onclick="showFile(31)" id="tf-31">rtwtypes.h</div>
+<div class="tree-file" onclick="showFile(27)" id="tf-27">soc_opt5_network.h</div>
+<div class="tree-file" onclick="showFile(28)" id="tf-28">soc_opt5_network.c <span class="line-badge">794 lines</span></div>
+<div class="tree-file" onclick="showFile(29)" id="tf-29">soc_opt5_network_types.h</div>
+<div class="tree-file" onclick="showFile(30)" id="tf-30">soc_opt5_network_data.c <span class="line-badge">2,636 lines</span></div>
+<div class="tree-file" onclick="showFile(31)" id="tf-31">ert_main.c</div>
+<div class="tree-file" onclick="showFile(32)" id="tf-32">rtwtypes.h</div>
 
 </div>
 <div class="code-viewer">
@@ -39466,7 +39466,181 @@ function s = firstLine(msg)
     if numel(s) &gt; 120, s = [s(1:120) &#x27;...&#x27;]; end
 end
 </pre>
-<pre id="file-content-25" style="display:none">classdef TestPipeline_opt5 &lt; matlab.unittest.TestCase
+<pre id="file-content-25" style="display:none">%% build_simulink_model.m — Programmatic Simulink model for Option 5 compression
+% =========================================================================
+% Builds the SOC estimation Simulink model from scratch using MATLAB&#x27;s
+% block-building API (no binary .slx required in source control).
+%
+% The model wraps the compressed network (proj10_quant: neuronPCA 10%
+% projection + dlquantizer int8) inside a proper Simulink diagram with:
+%   - From Workspace input block  (5-feature sensor data, [T x F])
+%   - Predict block               (quantizedDlnetwork inference)
+%   - To Workspace output block   (SOC estimate)
+%   - Scope                       (for interactive simulation viewing)
+%   - Configures ERT solver for ARM Cortex-M deployment
+%
+% Run this script to regenerate soc_opt5_model.slx from the saved
+% compressed network (soc_compressed_opt5.mat). No binary committed.
+%
+% Prerequisites: soc_compressed_opt5.mat (run step1_compress.m first)
+%
+% Outputs: soc_opt5_model.slx  (ready for sim, codegen, and deployment)
+% =========================================================================
+clear; clc;
+fprintf(&#x27;=== Building Simulink Model — Option 5 (proj10_quant) ===\n\n&#x27;);
+
+%% ---- Config ------------------------------------------------------------
+COMP_FILE  = &#x27;soc_compressed_opt5.mat&#x27;;
+TV_FILE    = fullfile(&#x27;..&#x27;, &#x27;test_vectors_100.mat&#x27;);
+MDL_NAME   = &#x27;soc_opt5_model&#x27;;
+MDL_FILE   = [MDL_NAME &#x27;.slx&#x27;];
+N_FEATURES = 5;
+SEQ_LEN    = 10;
+
+%% ---- Load compressed network ------------------------------------------
+fprintf(&#x27;[1/6] Loading compressed network...\n&#x27;);
+assert(isfile(COMP_FILE), &#x27;Run step1_compress.m first: %s not found.&#x27;, COMP_FILE);
+s       = load(COMP_FILE, &#x27;bestNet&#x27;, &#x27;bestKey&#x27;);
+compNet = s.bestNet;
+fprintf(&#x27;  Loaded: %s  (class: %s)\n&#x27;, s.bestKey, class(compNet));
+
+%% ---- Load test vectors for workspace input ----------------------------
+fprintf(&#x27;[2/6] Loading test vectors for workspace signal...\n&#x27;);
+assert(isfile(TV_FILE), &#x27;Test vectors not found: %s&#x27;, TV_FILE);
+tv = load(TV_FILE);
+% Build a single time-series input from the first test sample for demo
+% Shape: [T x F] feature matrix, time-indexed for From Workspace block
+sample_idx = 1;
+featData   = double(squeeze(tv.inputs(sample_idx, :, :)));   % [T x F]
+t_vec      = (0 : SEQ_LEN-1)&#x27;;
+% From Workspace expects [time, data...]: [T x (1+F)]
+soc_input_ws = [t_vec, featData];
+fprintf(&#x27;  Demo sample %d: input shape [%d x %d]\n&#x27;, ...
+    sample_idx, size(featData,1), size(featData,2));
+
+%% ---- Create new Simulink model ----------------------------------------
+fprintf(&#x27;[3/6] Creating Simulink model: %s\n&#x27;, MDL_NAME);
+if bdIsLoaded(MDL_NAME)
+    close_system(MDL_NAME, 0);
+end
+if isfile(MDL_FILE)
+    delete(MDL_FILE);
+end
+
+new_system(MDL_NAME);
+open_system(MDL_NAME);
+
+% Canvas layout constants
+BW = 120;   % block width
+BH = 40;    % block height
+X0 = 50;    % left margin
+GAP = 80;   % gap between blocks
+
+%% ---- Add blocks --------------------------------------------------------
+fprintf(&#x27;[4/6] Adding blocks...\n&#x27;);
+
+% --- From Workspace (sensor input) ---
+fromWsPos = [X0, 120, X0+BW, 120+BH];
+add_block(&#x27;simulink/Sources/From Workspace&#x27;, [MDL_NAME &#x27;/SensorInput&#x27;], ...
+    &#x27;VariableName&#x27;, &#x27;soc_input_ws&#x27;, ...
+    &#x27;SampleTime&#x27;,   &#x27;1&#x27;, ...
+    &#x27;OutputAfterFinalValue&#x27;, &#x27;Holding final value&#x27;, ...
+    &#x27;Position&#x27;, fromWsPos);
+
+% Demux to split 5 features into separate signals (network block may
+% need individual feature ports depending on exportNetworkToSimulink output)
+demuxPos = [fromWsPos(3)+GAP, 100, fromWsPos(3)+GAP+30, 160+BH];
+add_block(&#x27;simulink/Signal Routing/Demux&#x27;, [MDL_NAME &#x27;/FeatureDemux&#x27;], ...
+    &#x27;Outputs&#x27;,   num2str(N_FEATURES), ...
+    &#x27;Position&#x27;,  demuxPos);
+
+% Connect From Workspace → Demux
+add_line(MDL_NAME, &#x27;SensorInput/1&#x27;, &#x27;FeatureDemux/1&#x27;, &#x27;autorouting&#x27;, &#x27;on&#x27;);
+
+%% ---- Export compressed network to Simulink sub-block ------------------
+fprintf(&#x27;[5/6] Exporting compressed network to Simulink block...\n&#x27;);
+NET_BLOCK = [MDL_NAME &#x27;/SOC_Network&#x27;];
+try
+    exportNetworkToSimulink(compNet, &#x27;ModelName&#x27;, [MDL_NAME &#x27;_net_tmp&#x27;]);
+    % Copy the exported network subsystem into our model as a masked block
+    % (exportNetworkToSimulink creates a standalone model; we reference it
+    %  via a Model block for cleaner diagram organisation)
+    netX = demuxPos(3) + GAP*2;
+    netPos = [netX, 80, netX+BW+30, 80+BH*3];
+    add_block(&#x27;simulink/Ports &amp; Subsystems/Model&#x27;, NET_BLOCK, ...
+        &#x27;ModelName&#x27;, [MDL_NAME &#x27;_net_tmp&#x27;], ...
+        &#x27;Position&#x27;,  netPos);
+    fprintf(&#x27;  Network block added (Model reference: %s_net_tmp)\n&#x27;, MDL_NAME);
+catch ME
+    % Fallback: plain MATLAB Function block running predict()
+    fprintf(&#x27;  Model reference failed (%s)\n&#x27;, ME.message);
+    fprintf(&#x27;  Falling back to MATLAB Function block...\n&#x27;);
+    netX  = demuxPos(3) + GAP*2;
+    netPos = [netX, 90, netX+BW+20, 90+BH*2];
+    add_block(&#x27;simulink/User-Defined Functions/MATLAB Function&#x27;, NET_BLOCK, ...
+        &#x27;Position&#x27;, netPos);
+    % Write the MATLAB function body
+    rt = sfroot();
+    mdl = rt.find(&#x27;-isa&#x27;, &#x27;Simulink.BlockDiagram&#x27;, &#x27;Name&#x27;, MDL_NAME);
+    blk = mdl.find(&#x27;-isa&#x27;,&#x27;Stateflow.EMChart&#x27;,&#x27;Name&#x27;,&#x27;SOC_Network&#x27;);
+    if ~isempty(blk)
+        blk.Script = sprintf([...
+            &#x27;function soc = SOC_Network(features)\n&#x27;...
+            &#x27;%%#codegen\n&#x27;...
+            &#x27;%% Runs compressed dlnetwork predict on one time step.\n&#x27;...
+            &#x27;%% features: [1 x %d] row vector (one time step)\n&#x27;...
+            &#x27;persistent net;\n&#x27;...
+            &#x27;if isempty(net)\n&#x27;...
+            &#x27;    net = coder.loadDeepLearningNetwork(&#x27;&#x27;soc_compressed_opt5.mat&#x27;&#x27;,&#x27;&#x27;bestNet&#x27;&#x27;);\n&#x27;...
+            &#x27;end\n&#x27;...
+            &#x27;x    = dlarray(single(reshape(features, [1 1 %d])),&#x27;&#x27;BTC&#x27;&#x27;);\n&#x27;...
+            &#x27;y    = predict(net, x);\n&#x27;...
+            &#x27;soc  = double(extractdata(y));\n&#x27;...
+            &#x27;end\n&#x27;], N_FEATURES, N_FEATURES);
+    end
+    fprintf(&#x27;  MATLAB Function block configured.\n&#x27;);
+end
+
+% --- To Workspace (SOC output) ---
+netBlock  = find_system(MDL_NAME, &#x27;SearchDepth&#x27;, 1, &#x27;BlockType&#x27;, &#x27;SubSystem&#x27;);
+if isempty(netBlock)
+    netBlock = find_system(MDL_NAME, &#x27;SearchDepth&#x27;, 1, &#x27;BlockType&#x27;, &#x27;ModelReference&#x27;);
+end
+outX = 500;
+toWsPos = [outX, 120, outX+BW, 120+BH];
+add_block(&#x27;simulink/Sinks/To Workspace&#x27;, [MDL_NAME &#x27;/SOC_Output&#x27;], ...
+    &#x27;VariableName&#x27;, &#x27;soc_output&#x27;, ...
+    &#x27;SampleTime&#x27;,   &#x27;1&#x27;, ...
+    &#x27;SaveFormat&#x27;,   &#x27;Array&#x27;, ...
+    &#x27;Position&#x27;,     toWsPos);
+
+% --- Scope ---
+scopePos = [outX, 200, outX+BW, 200+BH];
+add_block(&#x27;simulink/Sinks/Scope&#x27;, [MDL_NAME &#x27;/SOC_Scope&#x27;], ...
+    &#x27;Position&#x27;, scopePos);
+
+%% ---- Configure model for ERT / ARM Cortex-M ---------------------------
+set_param(MDL_NAME, &#x27;SolverType&#x27;,         &#x27;Fixed-step&#x27;);
+set_param(MDL_NAME, &#x27;SolverName&#x27;,         &#x27;FixedStepDiscrete&#x27;);
+set_param(MDL_NAME, &#x27;FixedStep&#x27;,          &#x27;1&#x27;);
+set_param(MDL_NAME, &#x27;StopTime&#x27;,           num2str(SEQ_LEN - 1));
+set_param(MDL_NAME, &#x27;SystemTargetFile&#x27;,   &#x27;ert.tlc&#x27;);
+set_param(MDL_NAME, &#x27;ProdHWDeviceType&#x27;,   &#x27;ARM Compatible-&gt;ARM Cortex-M&#x27;);
+set_param(MDL_NAME, &#x27;PortableWordSizes&#x27;,  &#x27;on&#x27;);
+set_param(MDL_NAME, &#x27;GenerateMakefile&#x27;,   &#x27;on&#x27;);
+fprintf(&#x27;  Model configured: ERT / ARM Cortex-M / PortableWordSizes=on\n&#x27;);
+
+%% ---- Save model -------------------------------------------------------
+save_system(MDL_NAME, MDL_FILE);
+fprintf(&#x27;\n[6/6] Saved: %s\n&#x27;, MDL_FILE);
+fprintf(&#x27;\nModel diagram:\n&#x27;);
+fprintf(&#x27;  [From Workspace] --&gt; [FeatureDemux] --&gt; [SOC_Network] --&gt; [To Workspace]\n&#x27;);
+fprintf(&#x27;                                                          --&gt; [Scope]\n&#x27;);
+fprintf(&#x27;\nTo simulate:  sim(&#x27;&#x27;%s&#x27;&#x27;)\n&#x27;, MDL_NAME);
+fprintf(&#x27;To codegen:   slbuild(&#x27;&#x27;%s&#x27;&#x27;)\n&#x27;, MDL_NAME);
+fprintf(&#x27;=== Done ===\n&#x27;);
+</pre>
+<pre id="file-content-26" style="display:none">classdef TestPipeline_opt5 &lt; matlab.unittest.TestCase
 %TESTPIPELINE_OPT5  Tests for Option 5 Compression + Simulink + Codegen pipeline.
 %
 %   Run from option5_compressed/ directory:
@@ -39809,7 +39983,7 @@ end
 
 end
 </pre>
-<pre id="file-content-26" style="display:none">/*
+<pre id="file-content-27" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -40156,7 +40330,7 @@ extern RT_MODEL_soc_opt5_network_T *const soc_opt5_network_M;
  * [EOF]
  */
 </pre>
-<pre id="file-content-27" style="display:none">/*
+<pre id="file-content-28" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -40951,7 +41125,7 @@ void soc_opt5_network_terminate(void)
  * [EOF]
  */
 </pre>
-<pre id="file-content-28" style="display:none">/*
+<pre id="file-content-29" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -40983,7 +41157,7 @@ typedef struct tag_RTM_soc_opt5_network_T RT_MODEL_soc_opt5_network_T;
  * [EOF]
  */
 </pre>
-<pre id="file-content-29" style="display:none">/*
+<pre id="file-content-30" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -43620,7 +43794,7 @@ const ConstP_soc_opt5_network_T soc_opt5_network_ConstP = {
  * [EOF]
  */
 </pre>
-<pre id="file-content-30" style="display:none">/*
+<pre id="file-content-31" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -43725,7 +43899,7 @@ int_T main(int_T argc, const char *argv[])
  * [EOF]
  */
 </pre>
-<pre id="file-content-31" style="display:none">/*
+<pre id="file-content-32" style="display:none">/*
  * Prerelease License - for engineering feedback and testing purposes
  * only. Not for sale.
  *
@@ -43974,7 +44148,7 @@ function show(id) {
 }
 
 // File data metadata
-const FILES = [{"name": "soc_model.h", "path": "option1_c/soc_model.h", "lang": "c", "lines": 35}, {"name": "soc_model.c", "path": "option1_c/soc_model.c", "lang": "c", "lines": 222}, {"name": "main_test.c", "path": "option1_c/main_test.c", "lang": "c", "lines": 78}, {"name": "test_equivalence.c", "path": "option1_c/test_equivalence.c", "lang": "c", "lines": 68}, {"name": "Makefile", "path": "option1_c/Makefile", "lang": "makefile", "lines": 48}, {"name": "generate_code_pytorch_coder.m", "path": "option2_matlab_pytorch_coder/generate_code_pytorch_coder.m", "lang": "matlab", "lines": 196}, {"name": "predict_soc.m", "path": "option2_matlab_pytorch_coder/predict_soc.m", "lang": "matlab", "lines": 16}, {"name": "predict_soc.h", "path": "option2_matlab_pytorch_coder/outputDir/predict_soc.h", "lang": "c", "lines": 34}, {"name": "predict_soc.c", "path": "option2_matlab_pytorch_coder/outputDir/predict_soc.c", "lang": "c", "lines": 12322}, {"name": "generate_code_import_pytorch.m", "path": "option3_matlab_import_pytorch/generate_code_import_pytorch.m", "lang": "matlab", "lines": 274}, {"name": "predict_soc_dlnet.m", "path": "option3_matlab_import_pytorch/predict_soc_dlnet.m", "lang": "matlab", "lines": 26}, {"name": "generate_code_onnx.m", "path": "option4_matlab_onnx/generate_code_onnx.m", "lang": "matlab", "lines": 291}, {"name": "predict_soc_onnx.m", "path": "option4_matlab_onnx/predict_soc_onnx.m", "lang": "matlab", "lines": 18}, {"name": "export_onnx.py", "path": "option4_matlab_onnx/export_onnx.py", "lang": "python", "lines": 94}, {"name": "callPredict.c", "path": "option4_matlab_onnx/outputDir/callPredict.c", "lang": "c", "lines": 11621}, {"name": "generate_code_manual_dlnetwork.m", "path": "option5_matlab_manual_dlnetwork/generate_code_manual_dlnetwork.m", "lang": "matlab", "lines": 263}, {"name": "predict_soc_native.m", "path": "option5_matlab_manual_dlnetwork/predict_soc_native.m", "lang": "matlab", "lines": 25}, {"name": "callPredict.c", "path": "option5_matlab_manual_dlnetwork/outputDir/callPredict.c", "lang": "c", "lines": 11563}, {"name": "bench_all_host.c", "path": "benchmarks/bench_all_host.c", "lang": "c", "lines": 165}, {"name": "test_equivalence_matlab.m", "path": "test_equivalence_matlab.m", "lang": "matlab", "lines": 44}, {"name": "step1_compress.m", "path": "option4_compressed/step1_compress.m", "lang": "matlab", "lines": 373}, {"name": "TestPipeline_opt4.m", "path": "option4_compressed/TestPipeline_opt4.m", "lang": "matlab", "lines": 340}, {"name": "step1_compress.m", "path": "option5_compressed/step1_compress.m", "lang": "matlab", "lines": 435}, {"name": "step2_simulink_sim.m", "path": "option5_compressed/step2_simulink_sim.m", "lang": "matlab", "lines": 206}, {"name": "step3_codegen_compare.m", "path": "option5_compressed/step3_codegen_compare.m", "lang": "matlab", "lines": 230}, {"name": "TestPipeline_opt5.m", "path": "option5_compressed/TestPipeline_opt5.m", "lang": "matlab", "lines": 342}, {"name": "soc_opt5_network.h", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network.h", "lang": "c", "lines": 346}, {"name": "soc_opt5_network.c", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network.c", "lang": "c", "lines": 794}, {"name": "soc_opt5_network_types.h", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network_types.h", "lang": "c", "lines": 31}, {"name": "soc_opt5_network_data.c", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network_data.c", "lang": "c", "lines": 2636}, {"name": "ert_main.c", "path": "option5_compressed/simulink_codegen_opt5/ert_main.c", "lang": "c", "lines": 104}, {"name": "rtwtypes.h", "path": "option5_compressed/simulink_codegen_opt5/rtwtypes.h", "lang": "c", "lines": 232}];
+const FILES = [{"name": "soc_model.h", "path": "option1_c/soc_model.h", "lang": "c", "lines": 35}, {"name": "soc_model.c", "path": "option1_c/soc_model.c", "lang": "c", "lines": 222}, {"name": "main_test.c", "path": "option1_c/main_test.c", "lang": "c", "lines": 78}, {"name": "test_equivalence.c", "path": "option1_c/test_equivalence.c", "lang": "c", "lines": 68}, {"name": "Makefile", "path": "option1_c/Makefile", "lang": "makefile", "lines": 48}, {"name": "generate_code_pytorch_coder.m", "path": "option2_matlab_pytorch_coder/generate_code_pytorch_coder.m", "lang": "matlab", "lines": 196}, {"name": "predict_soc.m", "path": "option2_matlab_pytorch_coder/predict_soc.m", "lang": "matlab", "lines": 16}, {"name": "predict_soc.h", "path": "option2_matlab_pytorch_coder/outputDir/predict_soc.h", "lang": "c", "lines": 34}, {"name": "predict_soc.c", "path": "option2_matlab_pytorch_coder/outputDir/predict_soc.c", "lang": "c", "lines": 12322}, {"name": "generate_code_import_pytorch.m", "path": "option3_matlab_import_pytorch/generate_code_import_pytorch.m", "lang": "matlab", "lines": 274}, {"name": "predict_soc_dlnet.m", "path": "option3_matlab_import_pytorch/predict_soc_dlnet.m", "lang": "matlab", "lines": 26}, {"name": "generate_code_onnx.m", "path": "option4_matlab_onnx/generate_code_onnx.m", "lang": "matlab", "lines": 291}, {"name": "predict_soc_onnx.m", "path": "option4_matlab_onnx/predict_soc_onnx.m", "lang": "matlab", "lines": 18}, {"name": "export_onnx.py", "path": "option4_matlab_onnx/export_onnx.py", "lang": "python", "lines": 94}, {"name": "callPredict.c", "path": "option4_matlab_onnx/outputDir/callPredict.c", "lang": "c", "lines": 11621}, {"name": "generate_code_manual_dlnetwork.m", "path": "option5_matlab_manual_dlnetwork/generate_code_manual_dlnetwork.m", "lang": "matlab", "lines": 263}, {"name": "predict_soc_native.m", "path": "option5_matlab_manual_dlnetwork/predict_soc_native.m", "lang": "matlab", "lines": 25}, {"name": "callPredict.c", "path": "option5_matlab_manual_dlnetwork/outputDir/callPredict.c", "lang": "c", "lines": 11563}, {"name": "bench_all_host.c", "path": "benchmarks/bench_all_host.c", "lang": "c", "lines": 165}, {"name": "test_equivalence_matlab.m", "path": "test_equivalence_matlab.m", "lang": "matlab", "lines": 44}, {"name": "step1_compress.m", "path": "option4_compressed/step1_compress.m", "lang": "matlab", "lines": 373}, {"name": "TestPipeline_opt4.m", "path": "option4_compressed/TestPipeline_opt4.m", "lang": "matlab", "lines": 340}, {"name": "step1_compress.m", "path": "option5_compressed/step1_compress.m", "lang": "matlab", "lines": 435}, {"name": "step2_simulink_sim.m", "path": "option5_compressed/step2_simulink_sim.m", "lang": "matlab", "lines": 206}, {"name": "step3_codegen_compare.m", "path": "option5_compressed/step3_codegen_compare.m", "lang": "matlab", "lines": 230}, {"name": "build_simulink_model.m", "path": "option5_compressed/build_simulink_model.m", "lang": "matlab", "lines": 173}, {"name": "TestPipeline_opt5.m", "path": "option5_compressed/TestPipeline_opt5.m", "lang": "matlab", "lines": 342}, {"name": "soc_opt5_network.h", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network.h", "lang": "c", "lines": 346}, {"name": "soc_opt5_network.c", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network.c", "lang": "c", "lines": 794}, {"name": "soc_opt5_network_types.h", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network_types.h", "lang": "c", "lines": 31}, {"name": "soc_opt5_network_data.c", "path": "option5_compressed/simulink_codegen_opt5/soc_opt5_network_data.c", "lang": "c", "lines": 2636}, {"name": "ert_main.c", "path": "option5_compressed/simulink_codegen_opt5/ert_main.c", "lang": "c", "lines": 104}, {"name": "rtwtypes.h", "path": "option5_compressed/simulink_codegen_opt5/rtwtypes.h", "lang": "c", "lines": 232}];
 
 // Code Explorer
 function showFile(idx) {
