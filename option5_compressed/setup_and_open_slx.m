@@ -38,6 +38,26 @@ fprintf('  Export OK — block parameters loaded.\n');
 %% ---- Configure simulation parameters ---------------------------------
 fprintf('[3/4] Configuring simulation...\n');
 load_system(MDL);
+
+% Fix: exportNetworkToSimulink sets the Inport data type to sfix8_En5
+% (the internal quantized type). External input data is double/single —
+% setting the Inport to 'single' lets the lstm1_in_cast DataTypeConversion
+% block inside the subsystem handle the float→fixed-point conversion.
+% ExternalInput matrix format requires double. Reset the Inport type
+% from sfix8_En5 (set by exportNetworkToSimulink) to double.
+% The lstm1_in_cast DataTypeConversion block inside the subsystem then
+% casts to the required fixed-point type.
+% ExternalInput matrix loading requires:
+%   1. PortDimensions = scalar '5' (NOT [5 1] — 1D vector of 5 elements)
+%   2. OutDataTypeStr = 'double' (matrix format only accepts double)
+% exportNetworkToSimulink sets both to fixed-point/2D defaults; override here.
+inPorts = find_system(MDL, 'SearchDepth', 1, 'BlockType', 'Inport');
+for k = 1:numel(inPorts)
+    set_param(inPorts{k}, 'PortDimensions',  '5');
+    set_param(inPorts{k}, 'OutDataTypeStr',  'double');
+end
+fprintf('  Inport: PortDimensions=5, OutDataTypeStr=double.\n');
+
 set_param(MDL, 'SolverType',        'Fixed-step');
 set_param(MDL, 'SolverName',        'FixedStepDiscrete');
 set_param(MDL, 'FixedStep',         '1');
@@ -50,7 +70,7 @@ set_param(MDL, 'OutputSaveName',    'yout');
 %% ---- Load test vector into workspace ----------------------------------
 tv        = load('../test_vectors_100.mat');
 sample    = double(squeeze(tv.inputs(1,:,:)));   % [10 x 5]
-soc_input = [(0:9)', sample];                    % [10 x 6]  [time, f1..f5]
+soc_input = double([(0:9)', sample]);            % [10 x 6]  [time, f1..f5]
 fprintf('  Test vector loaded: 10 steps × 5 features\n');
 fprintf('  PyTorch reference SOC: %.6f\n', tv.expected_outputs(1));
 
