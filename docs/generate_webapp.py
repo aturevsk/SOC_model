@@ -46,6 +46,13 @@ CODE_FILES = [
     ("Opt 5: Compression", "option5_compressed/step2_simulink_sim.m", "matlab"),
     ("Opt 5: Compression", "option5_compressed/step3_codegen_compare.m", "matlab"),
     ("Opt 5: Compression", "option5_compressed/TestPipeline_opt5.m", "matlab"),
+    # Simulink generated C (proj10_quant fixed-point — from Step 2 .slx export)
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/soc_opt5_network.h", "c"),
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/soc_opt5_network.c", "c"),
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/soc_opt5_network_types.h", "c"),
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/soc_opt5_network_data.c", "c"),
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/ert_main.c", "c"),
+    ("Opt 5: Simulink Codegen", "option5_compressed/simulink_codegen_opt5/rtwtypes.h", "c"),
 ]
 
 
@@ -476,6 +483,7 @@ code {{ font-size: 0.82rem; }}
 <tr><td>Codegen &mdash; Simulink fixed-point (proj10_quant)</td><td>3 C files / 262 KB</td><td>3,534 lines</td></tr>
 <tr style="background:rgba(34,197,94,0.08)"><td><b>Code size reduction</b></td><td colspan="2"><b>69% smaller &mdash; 0.31&times; vs direct codegen</b></td></tr>
 </table>
+<p style="margin-top:10px">The Simulink-generated C files (<code>soc_opt5_network.c</code>, <code>soc_opt5_network_data.c</code>, <code>ert_main.c</code>) are viewable in the <b>Code Explorer</b> under <i>Opt 5: Simulink Codegen</i>. The weight data file (<code>soc_opt5_network_data.c</code>) contains the int8 fixed-point coefficients — compare it to Option 2&apos;s float32 <code>predict_soc.c</code> to see the quantization difference directly.</p>
 </div>
 
 <h3>Key Technical Issues &amp; Fixes</h3>
