@@ -38,6 +38,14 @@ CODE_FILES = [
     # Benchmarks
     ("Benchmarks", "benchmarks/bench_all_host.c", "c"),
     ("Benchmarks", "test_equivalence_matlab.m", "matlab"),
+    # Compression — Option 4
+    ("Opt 4: Compression", "option4_compressed/step1_compress.m", "matlab"),
+    ("Opt 4: Compression", "option4_compressed/TestPipeline_opt4.m", "matlab"),
+    # Compression — Option 5
+    ("Opt 5: Compression", "option5_compressed/step1_compress.m", "matlab"),
+    ("Opt 5: Compression", "option5_compressed/step2_simulink_sim.m", "matlab"),
+    ("Opt 5: Compression", "option5_compressed/step3_codegen_compare.m", "matlab"),
+    ("Opt 5: Compression", "option5_compressed/TestPipeline_opt5.m", "matlab"),
 ]
 
 
@@ -195,6 +203,7 @@ code {{ font-size: 0.82rem; }}
     <button class="nav-btn" onclick="show('performance')">Performance</button>
     <button class="nav-btn" onclick="show('options')">Options Detail</button>
     <button class="nav-btn" onclick="show('issues')">Issues &amp; Fixes</button>
+    <button class="nav-btn" onclick="show('compression')">Compression</button>
     <button class="nav-btn" onclick="show('code')">Code Explorer</button>
   </div>
 </div>
@@ -408,6 +417,79 @@ code {{ font-size: 0.82rem; }}
 </ul>
 </div>
 
+<!-- COMPRESSION -->
+<div id="compression" class="page">
+<h2>Model Compression &mdash; Options 4 &amp; 5</h2>
+<p>Post-training compression pipeline targeting <b>MAE &lt; 1e-3</b> vs PyTorch on 100 test vectors, with maximum Flash savings for embedded deployment.</p>
+
+<div class="grid2" style="margin: 16px 0">
+  <div class="stat-card"><div class="stat-val" style="color:var(--green)">77.5%</div><div class="stat-label">Flash Savings (Opt 5 winner)</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--accent)">48.4 KB</div><div class="stat-label">Compressed Size (from 215.5 KB)</div></div>
+</div>
+
+<div class="card" style="border-left: 3px solid var(--opt4)">
+<div class="card-title"><span class="opt-dot" style="background:var(--opt4)"></span>Option 4 (ONNX) &mdash; Compression Results</div>
+<p>ONNX-imported custom layers limit available compression techniques.</p>
+<table>
+<tr><th>Technique</th><th>Status</th><th>MAE</th><th>Size</th><th>Savings</th></tr>
+<tr><td>neuronPCA projection</td><td><span class="badge badge-pass">WORKS</span></td><td>varies</td><td>varies</td><td>varies</td></tr>
+<tr><td>dlquantizer (int8)</td><td><span class="badge badge-fail">FAILS</span></td><td colspan="3">Custom ONNX layers not supported by quantizer</td></tr>
+<tr><td>taylorPrunableNetwork</td><td><span class="badge badge-fail">FAILS</span></td><td colspan="3">LSTM not supported in R2026a</td></tr>
+<tr style="background:rgba(34,197,94,0.08)"><td><b>manual_int8 &larr; BEST</b></td><td><span class="badge badge-pass">PASS</span></td><td>3.55e-04</td><td>~53.9 KB</td><td>75.0%</td></tr>
+<tr><td>Simulink export</td><td><span class="badge badge-fail">FAILS</span></td><td colspan="3">ONNX custom layers not exportable to Simulink</td></tr>
+</table>
+</div>
+
+<div class="card" style="border-left: 3px solid var(--opt5)">
+<div class="card-title"><span class="opt-dot" style="background:var(--opt5)"></span>Option 5 (Native dlnetwork) &mdash; Compression Results</div>
+<p>Full compression toolchain available &mdash; no custom layers.</p>
+<table>
+<tr><th>Technique</th><th>Status</th><th>MAE</th><th>Size (KB)</th><th>Savings</th></tr>
+<tr><td>Baseline float32</td><td>&mdash;</td><td>5.16e-09</td><td>215.5</td><td>0%</td></tr>
+<tr><td>proj_cf01 (10% projection)</td><td><span class="badge badge-pass">PASS</span></td><td>3.93e-04</td><td>193.6</td><td>10.2%</td></tr>
+<tr><td>proj_cf07 (70% projection)</td><td><span class="badge badge-fail">FAIL</span></td><td>1.70e-03</td><td>61.9</td><td>71.3%</td></tr>
+<tr><td>proj_cf09 (90% projection)</td><td><span class="badge badge-fail">FAIL</span></td><td>1.64e-03</td><td>19.3</td><td>91.0%</td></tr>
+<tr style="background:rgba(34,197,94,0.12)"><td><b>proj10_quant (10%+int8) &larr; WINNER</b></td><td><span class="badge badge-pass">PASS</span></td><td>9.50e-04</td><td><b>48.4</b></td><td><b>77.5%</b></td></tr>
+<tr><td>quant_int8 (baseline+int8)</td><td><span class="badge badge-pass">PASS</span></td><td>9.31e-04</td><td>53.9</td><td>75.0%</td></tr>
+<tr><td>manual_int8</td><td><span class="badge badge-pass">PASS</span></td><td>3.55e-04</td><td>53.9</td><td>75.0%</td></tr>
+<tr><td>taylorPrunableNetwork</td><td><span class="badge badge-fail">FAILS</span></td><td colspan="3">LSTM not supported in R2026a</td></tr>
+</table>
+</div>
+
+<div class="card">
+<div class="card-title">Combined Pipeline: proj10_quant</div>
+<p>The winning approach chains two compression stages:</p>
+<ol style="color:var(--muted); padding-left:20px; margin-bottom:12px">
+  <li><b>Stage 1 &mdash; neuronPCA projection (10%):</b> Pre-compute PCA on LSTM/FC activations with <code>neuronPCA(net, mbq)</code>, then compress with <code>compressNetworkUsingProjection(net, npca, LearnablesReductionGoal=0.10, UnpackProjectedLayers=true)</code>. Achieves 10.2% reduction without fine-tuning (MAE = 3.93e-04). No fine-tuning required.</li>
+  <li><b>Stage 2 &mdash; dlquantizer int8:</b> Apply <code>dlquantizer(projNet, ExecutionEnvironment='MATLAB')</code> to the projected network. Critical: call <code>prepareNetwork(qObj)</code> before <code>calibrate()</code>. Reduces 193.6 KB &rarr; 48.4 KB int8.</li>
+</ol>
+<p><b>Final result:</b> 215.5 KB &rarr; 48.4 KB = <span style="color:var(--green);font-weight:700">77.5% Flash savings</span>, MAE = 9.50e-04 &#10003;</p>
+</div>
+
+<div class="card">
+<div class="card-title">Simulink &amp; Codegen Verification (Option 5)</div>
+<table>
+<tr><th>Stage</th><th>Result</th><th>Metric</th></tr>
+<tr><td>MATLAB predict (compressed vs PyTorch)</td><td><span class="badge badge-pass">PASS</span></td><td>MAE = 9.50e-04 &lt; 1e-03</td></tr>
+<tr><td>Simulink simulation (100 &times; 10 steps)</td><td><span class="badge badge-pass">PASS</span></td><td>MAE = 2.09e-03 &lt; 5e-03</td></tr>
+<tr><td>Codegen &mdash; direct float32</td><td>14 C files / 854 KB</td><td>12,463 lines</td></tr>
+<tr><td>Codegen &mdash; Simulink fixed-point (proj10_quant)</td><td>3 C files / 262 KB</td><td>3,534 lines</td></tr>
+<tr style="background:rgba(34,197,94,0.08)"><td><b>Code size reduction</b></td><td colspan="2"><b>69% smaller &mdash; 0.31&times; vs direct codegen</b></td></tr>
+</table>
+</div>
+
+<h3>Key Technical Issues &amp; Fixes</h3>
+<ul class="issue-list">
+<li class="resolved"><b>neuronPCA minibatchqueue format</b> &mdash; Must use cell array of [T&times;F] sequences with <code>MiniBatchFormat='TCB'</code> and <code>MiniBatchFcn=@(X) cat(3,X&#123;:&#125;)</code>. Standard numeric datastores fail.<br><b>Fix:</b> <code>arrayDatastore(seqData, 'IterationDimension',1, 'OutputType','same')</code> where <code>seqData</code> is a cell array of [T&times;F] single matrices.</li>
+<li class="resolved"><b>dlquantizer: fi() cannot handle LSTM table outputs</b> &mdash; Without <code>prepareNetwork(qObj)</code>, LSTM (h,c) states are packaged as MATLAB <code>table</code> objects during Fixed-Point simulation. The <code>fi()</code> function throws <code>fixed:fi:unsupportedType</code>.<br><b>Fix:</b> Always call <code>prepareNetwork(qObj)</code> before <code>calibrate(qObj, ds)</code>.</li>
+<li class="resolved"><b>calibrate() rejects minibatchqueue</b> &mdash; Despite documentation hints, <code>calibrate</code> only accepts <code>ArrayDatastore</code> of [T&times;F] cell sequences. Numeric [N&times;T&times;F] arrays fail with "Input data size not compatible."<br><b>Fix:</b> <code>arrayDatastore(seqData, 'IterationDimension',1, 'OutputType','same')</code></li>
+<li class="resolved"><b>macOS crash after quantize()</b> &mdash; MATLAB R2026a crashes in a background thread (<code>detectHomeSessionAndSetInfo</code>) immediately after <code>quantize()</code> returns.<br><b>Fix:</b> <code>save('model.mat', 'qNet', '-v7.3')</code> immediately after <code>quantize()</code>, before any other operations.</li>
+<li class="resolved"><b>ARM Cortex-M codegen word size error</b> &mdash; Fixed-point int type checks fail: <i>"Code was generated for compiler with different sized ulong/long"</i> when targeting ARM Cortex-M (32-bit) from macOS ARM64 (64-bit).<br><b>Fix:</b> <code>set_param(model, 'PortableWordSizes', 'on')</code></li>
+<li class="resolved"><b>Projection accuracy degrades above 10%</b> &mdash; Test vectors come from a narrow operating condition (all outputs &asymp; &minus;0.031 &plusmn; 0.002). Aggressive projection (70%, 90%) exceeds recovery capability of 100 real samples. Synthetic N(0,1) training data makes accuracy worse (distribution mismatch).<br><b>Finding:</b> Only 10% projection passes without fine-tuning. Combined with int8 quantization gives 77.5% savings.</li>
+<li class="resolved"><b>trainnet [T&times;F] format</b> &mdash; For dlnetwork with SequenceInputLayer, <code>trainnet</code> expects cell arrays of [T&times;F] per sample (time-first, TCB convention), not [F&times;T] (features-first, traditional MATLAB).<br><b>Fix:</b> <code>seqData&#123;i&#125; = reshape(inputs(i,:,:), [T, F])</code> &mdash; do NOT transpose.</li>
+</ul>
+</div>
+
 <!-- CODE EXPLORER -->
 <div id="code" class="page">
 <h2>Code Explorer</h2>
@@ -431,7 +513,7 @@ code {{ font-size: 0.82rem; }}
 </div><!-- end content -->
 
 <div class="footer">
-  SOC Model &mdash; C Code Generation for STM32F746G-Discovery &bull; MATLAB R2026a &bull; 5 options compared &bull; 100 test vectors &bull; March 2026
+  SOC Model &mdash; C Code Generation + Compression for STM32F746G-Discovery &bull; MATLAB R2026a &bull; 5 options compared &bull; Compression: 77.5% Flash savings &bull; March 2026
 </div>
 </div><!-- end app -->
 

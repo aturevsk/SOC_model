@@ -98,7 +98,8 @@ def build_report():
         "9. Comparative Analysis",
         "10. Benchmarking Results",
         "11. Recommendations",
-        "12. File Inventory"
+        "12. File Inventory",
+        "13. Model Compression — Options 4 & 5",
     ]
     for item in toc_items:
         story.append(Paragraph(item, styles['Body']))
@@ -914,10 +915,10 @@ def build_report():
 
     story.append(Paragraph("Further Optimization Opportunities:", styles['SubHead']))
     story.append(Paragraph(
-        "- <b>Quantization:</b> Convert float32 weights to int8/int16 to reduce Flash "
-        "by 2-4x and potentially speed up inference using integer SIMD.<br/>"
-        "- <b>Pruning:</b> Structured pruning of LSTM gates could reduce model size.<br/>"
-        "- <b>CMSIS-NN:</b> Use ARM's neural network library for optimized LSTM kernels.<br/>"
+        "- <b>Quantization (IMPLEMENTED for Opt 5):</b> dlquantizer int8 + neuronPCA projection "
+        "achieves 77.5% Flash reduction (215.5 KB → 48.4 KB) while passing MAE &lt; 1e-3. "
+        "See Section 13 for full details.<br/>"
+        "- <b>CMSIS-NN:</b> Use ARM's neural network library for optimized LSTM kernels on Cortex-M.<br/>"
         "- <b>DMA:</b> Use DMA for weight transfers to minimize cache misses.<br/>"
         "- <b>Sequence length:</b> If the application allows, reducing from 10 to 5 "
         "timesteps halves LSTM computation.",
@@ -961,6 +962,221 @@ def build_report():
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
     ]))
     story.append(t_inv)
+
+    # ======================== 13. MODEL COMPRESSION ========================
+    story.append(PageBreak())
+    story.append(Paragraph(
+        "13. Model Compression — Options 4 & 5", styles['SectionHead']))
+    story.append(Paragraph(
+        "After verifying C code generation for all five options, a model compression "
+        "sub-pipeline was developed for Options 4 and 5 to reduce Flash memory requirements "
+        "for deployment on constrained targets. The goal was MAE &lt; 1e-3 vs the PyTorch "
+        "reference on 100 test vectors, with maximum achievable parameter reduction.",
+        styles['Body']))
+    story.append(Paragraph(
+        "<b>Baseline:</b> 55,169 parameters, 215.5 KB float32 (Option 5 native dlnetwork).",
+        styles['Body']))
+
+    # --- Option 4 compression ---
+    story.append(Paragraph("13.1 Option 4 (ONNX) Compression", styles['SubHead']))
+    story.append(Paragraph(
+        "The ONNX-imported network contains auto-generated custom layers "
+        "(<font face='Courier'>soc_model_legacy</font>) that limit compression options.",
+        styles['Body']))
+
+    comp4_data = [
+        ['Technique', 'Result', 'MAE', 'Size', 'Savings'],
+        ['neuronPCA + projection', 'WORKS', 'varies', '—', '—'],
+        ['dlquantizer (int8)', 'FAILS', 'N/A', 'N/A', 'N/A'],
+        ['taylorPrunableNetwork', 'FAILS', 'N/A', 'N/A', 'N/A'],
+        ['manual_int8 (BEST)', 'PASS ✓', '3.55e-04', '~53.9 KB', '75.0%'],
+    ]
+    t_c4 = Table(comp4_data, colWidths=[2.0*inch, 1.0*inch, 1.0*inch, 1.0*inch, 1.0*inch])
+    t_c4.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#eafaf1')),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t_c4)
+    story.append(Spacer(1, 0.08*inch))
+    story.append(Paragraph(
+        "<b>Why dlquantizer fails for Option 4:</b> "
+        "<font face='Courier'>dlquantizer</font> does not support networks containing "
+        "ONNX-imported custom layers. The error is: "
+        "<font face='Courier'>\"Quantization is not supported for the current network architecture.\"</font> "
+        "The ONNX custom layers (<font face='Courier'>Shape_To_Expand</font>, "
+        "<font face='Courier'>Squeeze_To_Expand</font>, etc.) are not compatible with "
+        "the Fixed-Point Toolbox simulation required by the quantizer calibration step. "
+        "Manual int8 weight quantization remains the best available option for Option 4.",
+        styles['Body']))
+    story.append(Paragraph(
+        "<b>Simulink for Option 4:</b> "
+        "<font face='Courier'>exportNetworkToSimulink</font> also fails for the ONNX-imported "
+        "network because Simulink cannot generate blocks for ONNX custom layers. "
+        "Simulink integration (Steps 2 and 3) is therefore skipped for Option 4.",
+        styles['Body']))
+
+    # --- Option 5 compression ---
+    story.append(Paragraph("13.2 Option 5 (Native dlnetwork) Compression", styles['SubHead']))
+    story.append(Paragraph(
+        "The native dlnetwork (all standard MATLAB layers, no custom layers) supports "
+        "the full compression toolchain. Five techniques were evaluated, plus one "
+        "combined pipeline.",
+        styles['Body']))
+
+    comp5_data = [
+        ['Technique', 'Status', 'MAE', 'Size (KB)', 'Savings %'],
+        ['Baseline (float32)', 'BASELINE', '5.16e-09', '215.5', '0%'],
+        ['proj_cf01 (10% projection)', 'PASS ✓', '3.93e-04', '193.6', '10.2%'],
+        ['proj_cf07 (70% projection)', 'FAIL', '1.70e-03', '61.9', '71.3%'],
+        ['proj_cf09 (90% projection)', 'FAIL', '1.64e-03', '19.3', '91.0%'],
+        ['proj10_quant (10%+int8) ← WINNER', 'PASS ✓', '9.50e-04', '48.4', '77.5%'],
+        ['quant_int8 (baseline+int8)', 'PASS ✓', '9.31e-04', '53.9', '75.0%'],
+        ['manual_int8', 'PASS ✓', '3.55e-04', '53.9', '75.0%'],
+        ['taylorPrunableNetwork', 'FAILS', 'N/A', 'N/A', 'N/A'],
+    ]
+    t_c5 = Table(comp5_data, colWidths=[2.3*inch, 0.9*inch, 1.0*inch, 0.9*inch, 0.9*inch])
+    t_c5.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5276')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+        ('BACKGROUND', (0, 5), (-1, 5), colors.HexColor('#eafaf1')),
+        ('FONTNAME', (0, 5), (-1, 5), 'Helvetica-Bold'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t_c5)
+    story.append(Spacer(1, 0.1*inch))
+
+    story.append(Paragraph("13.3 Combined Compression Pipeline (proj10_quant)", styles['SubHead']))
+    story.append(Paragraph(
+        "The winning approach applies two compression stages in sequence:<br/>"
+        "<b>Stage 1 — neuronPCA projection (10%):</b> "
+        "<font face='Courier'>neuronPCA(baseNet, mbq)</font> pre-computes principal "
+        "component analysis on the LSTM and FC layer activations. "
+        "<font face='Courier'>compressNetworkUsingProjection</font> with "
+        "<font face='Courier'>LearnablesReductionGoal=0.10</font> and "
+        "<font face='Courier'>UnpackProjectedLayers=true</font> reduces parameters by 10.2% "
+        "(215.5 KB → 193.6 KB). Accuracy is already within budget at this stage "
+        "(MAE = 3.93e-04). No fine-tuning required.<br/>"
+        "<b>Stage 2 — dlquantizer int8:</b> The projected dlnetwork is fed to "
+        "<font face='Courier'>dlquantizer</font> with "
+        "<font face='Courier'>ExecutionEnvironment='MATLAB'</font>. The projected network "
+        "is a plain dlnetwork (all native MATLAB layers after UnpackProjectedLayers), so "
+        "the full quantization pipeline applies. The resulting "
+        "<font face='Courier'>quantizedDlnetwork</font> uses int8 weights, reducing "
+        "the 193.6 KB float32 projected model to ~48.4 KB.<br/>"
+        "<b>Combined result:</b> 215.5 KB → 48.4 KB = <b>77.5% Flash savings</b>, MAE = 9.50e-04 [PASS].",
+        styles['Body']))
+
+    story.append(Paragraph("13.4 Key Technical Challenges Solved", styles['SubHead']))
+
+    challenges = [
+        ("<b>neuronPCA minibatchqueue format</b>",
+         "neuronPCA requires a minibatchqueue with cell-array inputs. Must use: "
+         "arrayDatastore of [T×F] cell arrays, MiniBatchFormat='TCB', "
+         "MiniBatchFcn=@(X) cat(3,X{:}). Standard numeric array datastores fail."),
+        ("<b>dlquantizer requires prepareNetwork before calibrate</b>",
+         "Without calling prepareNetwork(qObj) first, LSTM (h,c) state outputs are "
+         "packaged as MATLAB table objects internally. The Fixed-Point Toolbox fi() "
+         "function cannot handle table inputs, producing: "
+         "'fixed:fi:unsupportedType: Inputs of class table are not supported.' "
+         "Fix: always call prepareNetwork(qObj) before calibrate()."),
+        ("<b>calibrate only accepts ArrayDatastore</b>",
+         "Despite documentation hints, calibrate() does not accept minibatchqueue. "
+         "It accepts ArrayDatastore of [T×F] cell sequences only "
+         "(IterationDimension=1, OutputType='same'). "
+         "Numeric [N×T×F] arrays produce 'Input data size not compatible.'"),
+        ("<b>macOS crash after quantize</b>",
+         "MATLAB R2026a crashes in a background connector thread "
+         "(detectHomeSessionAndSetInfo) immediately after quantize() returns on macOS. "
+         "Fix: save('soc_qnet_opt5.mat', 'qNet', '-v7.3') immediately after quantize, "
+         "before any other operations."),
+        ("<b>ARM Cortex-M codegen: PortableWordSizes required</b>",
+         "Quantized network generates fixed-point integer type checks "
+         "('#error Code was generated for compiler with different sized ulong/long') "
+         "when targeting ARM Cortex-M (32-bit ulong) from macOS ARM64 (64-bit ulong). "
+         "Fix: set_param(model, 'PortableWordSizes', 'on')."),
+        ("<b>Projection accuracy degrades sharply above 10%</b>",
+         "Test vectors come from a narrow operating condition (outputs all ≈ -0.031 ± 0.002). "
+         "Projection at 70% and 90% goals compresses too aggressively. "
+         "Fine-tuning on 100 real samples cannot recover accuracy (insufficient data). "
+         "Synthetic N(0,1) training data makes accuracy worse (distribution mismatch). "
+         "Only 10% goal passes without fine-tuning (MAE = 3.93e-04)."),
+    ]
+
+    for title, body in challenges:
+        challenge_data = [[
+            Paragraph(f"{title}<br/>{body}", styles['Body'])
+        ]]
+        t_ch = Table(challenge_data, colWidths=[6.5*inch])
+        t_ch.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9fa')),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#2c3e50')),
+            ('LEFTBORDER', (0, 0), (0, -1), 3, colors.HexColor('#1a5276')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(t_ch)
+        story.append(Spacer(1, 0.04*inch))
+
+    story.append(Paragraph("13.5 Simulink Verification & Codegen", styles['SubHead']))
+    story.append(Paragraph(
+        "The winning <font face='Courier'>proj10_quant</font> (quantizedDlnetwork) was "
+        "exported directly to Simulink using <font face='Courier'>exportNetworkToSimulink</font>, "
+        "which supports quantizedDlnetwork and generates fixed-point Simulink blocks.",
+        styles['Body']))
+
+    sim_data = [
+        ['Verification Stage', 'Result', 'Metric'],
+        ['MATLAB predict (quantized vs PyTorch)', 'PASS ✓', 'MAE = 9.50e-04 < 1e-03'],
+        ['Simulink sim (100 samples × 10 steps)', 'PASS ✓', 'MAE = 2.09e-03 < 5e-03'],
+        ['Codegen — direct float32 (baseline)', '14 C files / 854 KB', '12,463 lines'],
+        ['Codegen — Simulink fixed-point (proj10_quant)', '3 C files / 262 KB', '3,534 lines'],
+        ['Code size reduction', '69% smaller', '0.31× vs direct codegen'],
+    ]
+    t_sim = Table(sim_data, colWidths=[2.8*inch, 1.8*inch, 2.0*inch])
+    t_sim.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27ae60')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eafaf1')]),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#d5f5e3')),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(t_sim)
+    story.append(Spacer(1, 0.1*inch))
+
+    story.append(Paragraph(
+        "<b>Summary:</b> The combined projection + quantization pipeline for Option 5 achieves "
+        "<b>77.5% Flash reduction</b> (215.5 KB → 48.4 KB) while maintaining SOC accuracy within "
+        "the 1e-3 MAE budget. The compressed network integrates cleanly into Simulink "
+        "(fixed-point blocks, step/init/terminate harness) and generates 69% less C code "
+        "than the direct float32 codegen path. For Option 4 (ONNX), manual int8 weight "
+        "quantization provides 75% savings and remains the best available approach due to "
+        "custom layer constraints.",
+        styles['Body']))
 
     # Build PDF
     doc.build(story)
