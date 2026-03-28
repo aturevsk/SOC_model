@@ -15,6 +15,7 @@ benchmarks/omp_stub.h
 # MATLAB generated (keep codegen output, skip temp)
 *.asv
 *.slx
+!option5_compressed/soc_opt5_compressed.slx
 *.slxc
 slprj/
 codegen/
